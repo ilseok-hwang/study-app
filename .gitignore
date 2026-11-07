@@ -1,0 +1,5 @@
+# 원본 APK와 분석 산출물은 올리지 않습니다 (용량 + 원본 저작물)
+apk/
+*.apk
+*.xapk
+node_modules/

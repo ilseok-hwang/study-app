@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>포켓 수학 모험</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="app" class="app">
+    <!-- 화면은 app.js가 채웁니다 -->
+  </main>
+
+  <!-- 마을 지도 탐험 화면 (Phaser). 방향 버튼은 왼쪽 아래에 떠 있습니다. -->
+  <div id="map-view" hidden>
+    <div id="map-hud">
+      <button id="map-menu" class="hud-btn">☰ 메뉴</button>
+      <span id="map-title"></span>
+    </div>
+    <div id="map-canvas"></div>
+    <div id="dpad" aria-label="이동 버튼">
+      <button class="dpad-btn ul" data-dir="-1,-1">↖</button>
+      <button class="dpad-btn up" data-dir="0,-1">▲</button>
+      <button class="dpad-btn ur" data-dir="1,-1">↗</button>
+      <button class="dpad-btn left" data-dir="-1,0">◀</button>
+      <button class="dpad-btn right" data-dir="1,0">▶</button>
+      <button class="dpad-btn dl" data-dir="-1,1">↙</button>
+      <button class="dpad-btn down" data-dir="0,1">▼</button>
+      <button class="dpad-btn dr" data-dir="1,1">↘</button>
+    </div>
+  </div>
+
+  <!-- 외부 라이브러리 (cdnjs, 고정 버전). 불러오지 못하면 해당 기능만 대체됩니다. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="assets/pokemon-data.js"></script>
+  <script src="assets/avatar-rig-data.js"></script>
+  <script src="scene3d.js"></script>
+  <script src="map.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
