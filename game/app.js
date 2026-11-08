@@ -9,12 +9,13 @@ const VILLAGE_COUNT = 50;
 // 난이도 구간: 마을 10개씩 5구간으로 나눕니다.
 // weights: 야생 포켓몬 등급 비율 [1등급, 2등급, 3등급] / cap: 관장 포켓몬의 최대 등급
 // time: 관장전 제한 시간(초). 낮은 구간은 최대 5분, 최상급은 최소 30초입니다.
+// sum: 6살 문제에서 문제에 나오는 두 수의 합(a + b)의 상한. 초급 30, 중급 60 (그 밖의 구간은 제한 없음)
 const DIFFICULTY_BANDS = [
-  { name: "초급",   weights: [0.85, 0.15, 0.0], cap: 1, time: 300 },
-  { name: "입문",   weights: [0.6, 0.3, 0.1],   cap: 2, time: 240 },
-  { name: "중급",   weights: [0.4, 0.4, 0.2],   cap: 2, time: 180 },
-  { name: "상급",   weights: [0.2, 0.4, 0.4],   cap: 3, time: 90 },
-  { name: "최상급", weights: [0.1, 0.3, 0.6],   cap: 3, time: 30 },
+  { name: "초급",   weights: [0.85, 0.15, 0.0], cap: 1, time: 300, sum: 30 },
+  { name: "입문",   weights: [0.6, 0.3, 0.1],   cap: 2, time: 240, sum: 40 },
+  { name: "중급",   weights: [0.4, 0.4, 0.2],   cap: 2, time: 180, sum: 70 },
+  { name: "상급",   weights: [0.2, 0.4, 0.4],   cap: 3, time: 90, sum: 110 },
+  { name: "최상급", weights: [0.1, 0.3, 0.6],   cap: 3, time: 30, sum: Infinity },
 ];
 function bandOf(village) {
   return DIFFICULTY_BANDS[Math.min(DIFFICULTY_BANDS.length - 1, Math.floor(village / 10))];
@@ -537,7 +538,8 @@ function addHint(a, b) {
   };
 }
 
-function makeQuestion(age, lvl) {
+// sumMax: 6살 문제에서 두 수의 합(a + b)을 이 값 이하로 제한합니다 (구간 sum 값). 다른 나이에는 영향 없음.
+function makeQuestion(age, lvl, sumMax = Infinity) {
   let answer, text, visual = "", speech, count, hint;
 
   if (age === 5) {
@@ -553,15 +555,17 @@ function makeQuestion(age, lvl) {
       body: ["하나씩 짚으면서 세는 것을 '세기'라고 해요.", "묶어서 세면 더 빨라요!"],
     };
   } else if (age === 6) {
-    const max = clamp(3 + lvl * 3, 6, 15);
+    // 두 수의 합이 sumMax를 넘지 않도록 합니다 (초급 30, 중급 60). 제한이 없으면 기존과 같습니다.
+    const max = Math.min(clamp(3 + lvl * 3, 6, 15), Math.floor(sumMax / 2));
     // 최상급(레벨 5)은 두 자리 수 덧셈·뺄셈이 70% 나옵니다 (합·차는 99 이하)
     const big = lvl >= 5 && Math.random() < 0.7;
     if (big && Math.random() < 0.5) {
-      const a = rand(10, 89), b = rand(10, 99 - a);
+      const a = rand(10, Math.min(89, sumMax - 10)), b = rand(10, Math.min(99 - a, sumMax - a));
       answer = a + b; text = `${a} + ${b} = ?`;
       hint = addHint(a, b);
     } else if (big) {
-      const a = rand(20, 99), b = rand(10, a - 10);
+      // 뺄셈은 a + b(두 수의 합)가 sumMax 이하가 되도록 a, b를 고릅니다
+      const a = rand(20, Math.min(99, sumMax - 10)), b = rand(10, Math.min(a - 10, sumMax - a));
       answer = a - b; text = `${a} - ${b} = ?`;
       hint = subHint(a, b, answer);
     } else if (Math.random() < 0.5) {
@@ -1028,7 +1032,7 @@ function startStop(index) {
 
 function nextStopQ() {
   const s = stopSession;
-  s.q = makeQuestion(state.age, clamp(state.village + 1, 1, 5));
+  s.q = makeQuestion(state.age, clamp(state.village + 1, 1, 5), bandOf(state.village).sum);
   $app().innerHTML = `
     <div class="hud"><span>🏠 포켓스톱</span><span>${s.done + 1} / ${STOP_QUESTIONS}</span></div>
     <div class="card">
@@ -1135,7 +1139,7 @@ function renderEncounter(enc) {
 }
 
 function nextQuestion(enc) {
-  enc.q = makeQuestion(state.age, enc.d.qLevel);
+  enc.q = makeQuestion(state.age, enc.d.qLevel, bandOf(state.village).sum);
   showQuestion(enc.q, (n, b) => answer(enc, n, b), { hint: true });
 }
 
@@ -1376,7 +1380,7 @@ function nextBattleQ() {
   if (battle.over) return;
   // 관장전은 마을 난이도보다 한 단계 높게 냅니다.
   const qLevel = clamp(battle.idx + 3, 1, 5);
-  battle.q = makeQuestion(state.age, qLevel);
+  battle.q = makeQuestion(state.age, qLevel, bandOf(state.village).sum);
   showQuestion(battle.q, battleAnswer, { hint: true });
 }
 
