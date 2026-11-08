@@ -292,6 +292,16 @@ p { margin: 6px 0; color: var(--muted); }
 .dex .slot.empty img { filter: brightness(0); opacity: 0.15; }
 .dex .slot.empty span { color: var(--muted); }
 
+.wrong-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(0,0,0,0.08);
+}
+.wrong-row:last-child { border-bottom: none; }
+.wrong-row small { color: var(--muted); }
+
 .toast {
   position: fixed;
   left: 50%;
