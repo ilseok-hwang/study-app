@@ -253,23 +253,36 @@ const shuffle = (arr) => arr.sort(() => Math.random() - 0.5);
 // ---------- 저장 (실패해도 게임은 동작) ----------
 function defaultState() {
   return {
-    age: null, gender: "male", village: 0, caught: {}, partnerId: null, stars: 0, streak: 0, bestStreak: 0, badges: [],
+    age: null, gender: "male", village: 0,
+    caught: {},  // 지금 데리고 있는 포켓몬 (파트너 후보). 진화하면 이전 종은 여기서 빠집니다.
+    dex: {},     // 도감: 한 번이라도 잡거나 진화해서 얻은 종 { [id]: true } (진화해도 빠지지 않음)
+    wrongLog: [], // 틀린 문제 기록 [{ text, answer, picked, at }]
+    partnerId: null, stars: 0, streak: 0, bestStreak: 0, badges: [],
     items: { monster: 10, great: 0, ultra: 0 },
     stopUsedAt: {},
     hintPoints: 0, hintExp: 0, // 힌트 포인트 (보유 개수 / 다음 포인트까지 쌓인 경험치)
   };
 }
+const WRONG_LOG_MAX = 200; // 틀린 문제 기록은 최근 이만큼만 보관합니다
 function loadState() {
   const s = defaultState();
+  let saved = null;
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (raw) Object.assign(s, JSON.parse(raw));
+    if (raw) saved = JSON.parse(raw);
   } catch (e) { /* 저장소 사용 불가 */ }
+  if (saved) Object.assign(s, saved);
   // 예전 저장 형식(caught: {id: true}) 변환
   for (const k of Object.keys(s.caught || {})) {
     const v = s.caught[k];
     if (!v || typeof v !== "object") s.caught[k] = { lv: 1, exp: 0 };
   }
+  // 도감 기록이 없던 예전 저장: 지금 가진 포켓몬을 도감에 넣습니다 (진화로 빠진 종은 복구할 수 없어요)
+  if (saved && !saved.dex) {
+    s.dex = {};
+    for (const k of Object.keys(s.caught || {})) s.dex[k] = true;
+  }
+  if (!Array.isArray(s.wrongLog)) s.wrongLog = [];
   if (!Array.isArray(s.badges)) s.badges = [];
   if (!s.items) s.items = defaultState().items;
   if (s.gender !== "female") s.gender = "male";
@@ -302,7 +315,10 @@ function evolveIfReady() {
   const fromId = p.id;
   const entry = state.caught[p.id];
   delete state.caught[p.id];
-  state.caught[evo.to] = { lv: entry.lv, exp: entry.exp };
+  // 이미 같은 종을 따로 갖고 있으면 레벨이 더 높은 쪽을 남깁니다 (덮어쓰면 기록이 사라짐)
+  const prev = state.caught[evo.to];
+  state.caught[evo.to] = prev && prev.lv > entry.lv ? prev : { lv: entry.lv, exp: entry.exp };
+  state.dex[evo.to] = true; // 도감에는 진화한 종도 남깁니다 (이전 종은 원래 도감에 있음)
   state.partnerId = evo.to;
   saveState();
   return { type: "evo", fromId, toId: evo.to, lv: entry.lv };
@@ -822,11 +838,20 @@ function catchChance(ball, wild, d) {
   return clamp(ball.base - wild.tier * 0.08 - Math.max(0, d) * 0.02 + Math.max(0, -d) * 0.01, 0.1, 0.98);
 }
 
+// ---------- 틀린 문제 기록 ----------
+// 포획·포켓스톱·관장전 어디서든 틀린 문제를 한 번씩 남깁니다.
+function recordWrong(q, picked) {
+  if (!q) return;
+  state.wrongLog.push({ text: q.text, answer: q.answer, picked, at: Date.now() });
+  if (state.wrongLog.length > WRONG_LOG_MAX) state.wrongLog.splice(0, state.wrongLog.length - WRONG_LOG_MAX);
+  saveState();
+}
+
 // ---------- 화면: 홈 ----------
 function renderHome() {
   Scene3D.dispose();
   const p = partner();
-  const caughtCount = Object.keys(state.caught).length;
+  const dexCount = Object.keys(state.dex).length;
   $app().innerHTML = `
     <h1>🎯 포켓 수학 모험</h1>
     <p class="center">문제를 맞혀서 포켓몬을 잡고, 관장에게 도전해 보세요!</p>
@@ -845,10 +870,11 @@ function renderHome() {
       </div>
     </div>
     <div class="card">
-      <p class="center">파트너: <b>${p ? `${byId[p.id].name} Lv.${p.lv}` : "아직 없어요"}</b> · 도감 ${caughtCount}/${POKEMON.length}<br>💡 힌트 포인트 ${state.hintPoints}개 (다음까지 ${state.hintExp}/${HINT_EXP_PER_POINT})</p>
+      <p class="center">파트너: <b>${p ? `${byId[p.id].name} Lv.${p.lv}` : "아직 없어요"}</b> · 도감 ${dexCount}/${POKEMON.length}<br>💡 힌트 포인트 ${state.hintPoints}개 (다음까지 ${state.hintExp}/${HINT_EXP_PER_POINT})</p>
       <button class="btn" id="go-map" ${state.age ? "" : "disabled"}>지도로 가기</button>
       <button class="btn secondary" id="go-dex">도감 보기</button>
     </div>
+    <button class="btn ghost" id="go-wrong">❌ 틀린 문제 기록 (${state.wrongLog.length})</button>
   `;
   document.querySelectorAll("[data-age]").forEach((b) =>
     b.addEventListener("click", () => {
@@ -867,6 +893,7 @@ function renderHome() {
   );
   document.getElementById("go-map").onclick = renderMap;
   document.getElementById("go-dex").onclick = renderDex;
+  document.getElementById("go-wrong").onclick = renderWrongLog;
 }
 
 // ---------- 화면: 지도 (마을) ----------
@@ -1048,6 +1075,7 @@ function stopAnswer(n, btn) {
   const s = stopSession;
   if (!s) return;
   if (n !== s.q.answer) {
+    recordWrong(s.q, n);
     btn.style.background = "var(--bad)";
     btn.disabled = true;
     speak("다시 생각해 볼까요?");
@@ -1163,6 +1191,7 @@ function answer(enc, n, btn) {
   } else {
     sfx("se_go_ball_mistake_hit_pokemon");
     state.streak = 0;
+    recordWrong(enc.q, n);
     saveState();
     enc.wrong += 1;
     btn.style.background = "var(--bad)";
@@ -1224,8 +1253,9 @@ function catchSuccess(wild) {
   stopClock();
   Scene3D.dispose();
   const id = wild.poke.id;
-  const isNew = !state.caught[id];
-  if (isNew) state.caught[id] = { lv: wild.lv, exp: 0 };
+  const isNew = !state.dex[id];
+  state.dex[id] = true;
+  if (!state.caught[id]) state.caught[id] = { lv: wild.lv, exp: 0 };
   state.stars += 3 + wild.tier;
   saveState();
   const lvEvents = gainExp(wild.lv * 5, wild.lv);
@@ -1416,6 +1446,7 @@ function battleAnswer(n, btn) {
     }
     setTimeout(nextBattleQ, 600);
   } else {
+    recordWrong(battle.q, n);
     const dmg = 8 + Math.round(e.lv * 0.6);
     battle.pHp -= dmg;
     sfx("se_go_ball_mistake_hit_pokemon");
@@ -1509,15 +1540,16 @@ function renderPartner() {
 function renderDex() {
   Scene3D.dispose();
   const slots = POKEMON.map((p) => {
-    const c = state.caught[p.id];
-    return `<div class="slot ${c ? "" : "empty"}">
+    const owned = !!state.dex[p.id];
+    const c = state.caught[p.id]; // 지금 데리고 있는 경우에만 레벨을 보여 줍니다
+    return `<div class="slot ${owned ? "" : "empty"}">
       <img src="assets/pokemon/${p.id}.png" alt="">
-      <span>${c ? `${p.name} Lv.${c.lv}` : "???"}</span>
+      <span>${owned ? `${p.name}${c ? ` Lv.${c.lv}` : ""}` : "???"}</span>
     </div>`;
   }).join("");
   $app().innerHTML = `
     <h1>📖 도감</h1>
-    <p class="center">${Object.keys(state.caught).length} / ${POKEMON.length} 잡음</p>
+    <p class="center">${Object.keys(state.dex).length} / ${POKEMON.length} 잡음</p>
     <div class="card"><div class="dex">${slots}</div></div>
     <button class="btn" id="home">처음으로</button>
     <button class="btn secondary" id="reset">진행 기록 지우기</button>
@@ -1530,6 +1562,32 @@ function renderDex() {
     state.age = age;
     saveState();
     renderDex();
+  };
+}
+
+// ---------- 화면: 틀린 문제 기록 ----------
+function renderWrongLog() {
+  Scene3D.dispose();
+  const rows = state.wrongLog.length
+    ? state.wrongLog.slice().reverse().map((w) => `
+      <div class="wrong-row">
+        <strong>${w.text}</strong>
+        <span>내 답 <b style="color:var(--bad)">${w.picked}</b> · 정답 <b>${w.answer}</b></span>
+        <small>${new Date(w.at).toLocaleString("ko-KR")}</small>
+      </div>`).join("")
+    : `<p class="center">아직 틀린 문제가 없어요. 잘하고 있어요!</p>`;
+  $app().innerHTML = `
+    <h1>❌ 틀린 문제 기록</h1>
+    <p class="center">최근 ${WRONG_LOG_MAX}개까지 남겨요 (총 ${state.wrongLog.length}개)</p>
+    <div class="card">${rows}</div>
+    <button class="btn" id="home">처음으로</button>
+    <button class="btn secondary" id="clear-wrong">기록 지우기</button>`;
+  document.getElementById("home").onclick = renderHome;
+  document.getElementById("clear-wrong").onclick = () => {
+    if (!confirm("틀린 문제 기록을 모두 지울까요?")) return;
+    state.wrongLog = [];
+    saveState();
+    renderWrongLog();
   };
 }
 
