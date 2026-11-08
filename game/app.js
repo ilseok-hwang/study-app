@@ -628,8 +628,15 @@ function showQuestion(q, onPick, opts = {}) {
   box.querySelectorAll("button").forEach((b) =>
     b.addEventListener("click", () => onPick(Number(b.dataset.n), b))
   );
-  if (opts.hint && q.hint) {
-    box.insertAdjacentHTML("beforeend", `<button class="btn ghost hint-btn" id="hint-btn"></button>`);
+  // 힌트 옆에 그림판 버튼을 둡니다 (힌트는 opts.hint일 때만)
+  const hasHint = opts.hint && q.hint;
+  box.insertAdjacentHTML("beforeend", `
+    <div class="q-tools">
+      ${hasHint ? `<button class="btn ghost hint-btn" id="hint-btn"></button>` : ""}
+      <button class="btn ghost" id="draw-btn">✏️ 그림판</button>
+    </div>`);
+  document.getElementById("draw-btn").onclick = () => showDrawLayer(q.text);
+  if (hasHint) {
     const hb = document.getElementById("hint-btn");
     const paint = () => {
       hb.textContent = q.hintUsed ? "💡 힌트를 봤어요" : `💡 힌트 보기 (포인트 ${state.hintPoints}개)`;
@@ -646,6 +653,109 @@ function showQuestion(q, onPick, opts = {}) {
     };
   }
   speak(q.speech);
+}
+
+// 그림판 색 (검정, 빨강, 파랑, 주황, 녹색)
+const DRAW_COLORS = [
+  { name: "검정", hex: "#111111" },
+  { name: "빨강", hex: "#e5484d" },
+  { name: "파랑", hex: "#3b82f6" },
+  { name: "주황", hex: "#ff9f43" },
+  { name: "녹색", hex: "#2fb36b" },
+];
+
+// 그림판 레이어: 화면에 마우스·손가락으로 끄적일 수 있습니다. 상단에는 문제와 색 선택을 둡니다.
+function showDrawLayer(questionText) {
+  document.getElementById("draw-layer")?.remove();
+  const layer = document.createElement("div");
+  layer.id = "draw-layer";
+  layer.className = "draw-layer";
+  layer.innerHTML = `
+    <div class="draw-top">
+      <div class="draw-question">${questionText}</div>
+      <div class="draw-palette">
+        ${DRAW_COLORS.map((c) => `<button class="swatch" data-color="${c.hex}" style="background:${c.hex}" aria-label="${c.name}" title="${c.name}"></button>`).join("")}
+        <button class="eraser" id="draw-eraser">지우개</button>
+      </div>
+    </div>
+    <canvas id="draw-canvas"></canvas>
+    <div class="draw-bar">
+      <button class="btn secondary" id="draw-reset">🧹 초기화</button>
+      <button class="btn" id="draw-close">닫기</button>
+    </div>`;
+  document.body.appendChild(layer);
+
+  const cv = document.getElementById("draw-canvas");
+  const ctx = cv.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const rect = cv.getBoundingClientRect();
+  cv.width = rect.width * dpr;
+  cv.height = rect.height * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  // 현재 도구: 색 펜 또는 지우개 (지우개는 그린 선을 투명하게 지웁니다)
+  let color = DRAW_COLORS[0].hex;
+  let erasing = false;
+  const applyTool = () => {
+    ctx.globalCompositeOperation = erasing ? "destination-out" : "source-over";
+    ctx.lineWidth = erasing ? 28 : 4;
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+  };
+  const markTool = (el) => {
+    layer.querySelectorAll(".swatch, .eraser").forEach((x) => x.classList.remove("sel"));
+    el.classList.add("sel");
+  };
+  layer.querySelectorAll(".swatch").forEach((b) =>
+    b.addEventListener("click", () => {
+      color = b.dataset.color;
+      erasing = false;
+      applyTool();
+      markTool(b);
+    })
+  );
+  document.getElementById("draw-eraser").addEventListener("click", (e) => {
+    erasing = true;
+    applyTool();
+    markTool(e.currentTarget);
+  });
+  applyTool();
+  markTool(layer.querySelector(".swatch"));
+
+  const pos = (e) => {
+    const r = cv.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  };
+  let last = null;
+  cv.addEventListener("pointerdown", (e) => {
+    cv.setPointerCapture(e.pointerId);
+    last = pos(e);
+    ctx.beginPath();
+    ctx.arc(last.x, last.y, ctx.lineWidth / 2, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  cv.addEventListener("pointermove", (e) => {
+    if (!last) return;
+    const p = pos(e);
+    ctx.beginPath();
+    ctx.moveTo(last.x, last.y);
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+    last = p;
+  });
+  const end = () => { last = null; };
+  cv.addEventListener("pointerup", end);
+  cv.addEventListener("pointercancel", end);
+
+  document.getElementById("draw-reset").onclick = () => {
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.restore();
+  };
+  document.getElementById("draw-close").onclick = () => layer.remove();
 }
 
 // ---------- 힌트 포인트 (경험치처럼 쌓여서 힌트로 씁니다) ----------
