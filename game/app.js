@@ -292,40 +292,90 @@ function partnerLv() {
 }
 const expToNext = (lv) => 20 + lv * 10;
 
-// 파트너 진화 조건이 맞으면 진화시키고, 메시지를 돌려줍니다.
+// 파트너 진화 조건이 맞으면 진화시키고, 진화 이벤트를 돌려줍니다 (없으면 null)
 function evolveIfReady() {
   const p = partner();
   if (!p) return null;
   const evo = byId[p.id].evo;
   if (!evo || p.lv < evo.lv) return null;
-  const from = byId[p.id].name;
+  const fromId = p.id;
   const entry = state.caught[p.id];
   delete state.caught[p.id];
   state.caught[evo.to] = { lv: entry.lv, exp: entry.exp };
   state.partnerId = evo.to;
   saveState();
-  return `✨ 진화! ${from} → ${byId[evo.to].name}`;
+  return { type: "evo", fromId, toId: evo.to, lv: entry.lv };
 }
 
-// 파트너에게 경험치를 주고 레벨업/진화 메시지를 돌려줍니다 (없으면 null)
-function gainExp(amount) {
+// 상대가 파트너보다 강할수록 경험치를 더 줍니다 (레벨 1 차이당 ±15%, 0.5배~2배).
+function expMultiplier(enemyLv) {
+  const d = enemyLv - partnerLv();
+  return clamp(1 + d * 0.15, 0.5, 2);
+}
+
+// 파트너에게 경험치를 주고 레벨업/진화 이벤트 목록을 돌려줍니다 (없으면 빈 배열)
+// enemyLv를 주면 상대 레벨 차이에 따라 경험치를 가감합니다 (최소 1).
+function gainExp(amount, enemyLv) {
+  const events = [];
   const p = partner();
-  if (!p) return null;
-  const msgs = [];
+  if (!p) return events;
+  if (enemyLv != null) amount = Math.max(1, Math.round(amount * expMultiplier(enemyLv)));
   let entry = state.caught[p.id];
   entry.exp += amount;
   while (entry.lv < MAX_LV && entry.exp >= expToNext(entry.lv)) {
     entry.exp -= expToNext(entry.lv);
+    const from = entry.lv;
     entry.lv += 1;
-    msgs.push(`${byId[state.partnerId].name} 레벨 업! Lv.${entry.lv}`);
-    const evoMsg = evolveIfReady();
-    if (evoMsg) {
-      msgs.push(evoMsg);
+    events.push({ type: "lv", id: state.partnerId, from, to: entry.lv });
+    const evo = evolveIfReady();
+    if (evo) {
+      events.push(evo);
       entry = state.caught[state.partnerId];
     }
   }
   saveState();
-  return msgs.length ? msgs.join(" ") : null;
+  return events;
+}
+
+// 레벨업/진화 카드 (썸네일 포함)
+function eventCardHtml(ev) {
+  if (ev.type === "evo") {
+    return `
+      <div class="event-card evo">
+        <div class="event-tag">✨ 진화!</div>
+        <div class="evo-pair">
+          <figure><img src="assets/pokemon/${ev.fromId}.png" alt="${byId[ev.fromId].name}"><figcaption>${byId[ev.fromId].name}</figcaption></figure>
+          <span class="evo-arrow">➜</span>
+          <figure><img src="assets/pokemon/${ev.toId}.png" alt="${byId[ev.toId].name}"><figcaption>${byId[ev.toId].name}</figcaption></figure>
+        </div>
+        <p class="event-sub">${byId[ev.toId].name} Lv.${ev.lv}로 진화했어요</p>
+      </div>`;
+  }
+  return `
+    <div class="event-card lv">
+      <img src="assets/pokemon/${ev.id}.png" alt="${byId[ev.id].name}">
+      <div class="event-body">
+        <div class="event-tag">🆙 레벨 업!</div>
+        <b>${byId[ev.id].name}</b>
+        <span class="lv-change">Lv.${ev.from} → Lv.${ev.to}</span>
+      </div>
+    </div>`;
+}
+const eventCardsHtml = (events) => events.map(eventCardHtml).join("");
+
+// 지도 조우 중에는 화면을 가리지 않도록 위쪽에 잠깐 떴다가 사라지는 카드
+let floatTimer = null;
+function showFloatCards(events) {
+  let box = document.getElementById("float-card");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "float-card";
+    document.body.appendChild(box);
+  }
+  box.innerHTML = eventCardsHtml(events);
+  box.classList.add("show");
+  clearTimeout(floatTimer);
+  floatTimer = setTimeout(() => box.classList.remove("show"), 3000);
 }
 
 // ---------- 소리·음성·알림 ----------
@@ -504,7 +554,17 @@ function makeQuestion(age, lvl) {
     };
   } else if (age === 6) {
     const max = clamp(3 + lvl * 3, 6, 15);
-    if (Math.random() < 0.5) {
+    // 최상급(레벨 5)은 두 자리 수 덧셈·뺄셈이 70% 나옵니다 (합·차는 99 이하)
+    const big = lvl >= 5 && Math.random() < 0.7;
+    if (big && Math.random() < 0.5) {
+      const a = rand(10, 89), b = rand(10, 99 - a);
+      answer = a + b; text = `${a} + ${b} = ?`;
+      hint = addHint(a, b);
+    } else if (big) {
+      const a = rand(20, 99), b = rand(10, a - 10);
+      answer = a - b; text = `${a} - ${b} = ?`;
+      hint = subHint(a, b, answer);
+    } else if (Math.random() < 0.5) {
       const a = rand(0, max), b = rand(0, max - a);
       answer = a + b; text = `${a} + ${b} = ?`;
       hint = addHint(a, b);
@@ -701,7 +761,7 @@ function renderMap(msg) {
   const v = VILLAGES[state.village];
   const beaten = state.badges.includes(state.village);
   const last = state.village >= VILLAGE_COUNT - 1;
-  const canMove = beaten && !last;
+  const canMove = !last; // 모든 마을 이동 가능 (관장 배지와 무관)
   const p = partner();
   $app().innerHTML = `
     <h1>🗺️ ${v.name}</h1>
@@ -715,9 +775,9 @@ function renderMap(msg) {
       <button class="btn" id="walk">🗺️ 마을 탐험하기</button>
       <button class="btn secondary" id="gym" ${beaten ? "disabled" : ""}>${beaten ? "✅ 관장을 이겼어요" : "⚔️ 관장에게 도전하기"}</button>
       <button class="btn" id="move" ${canMove ? "" : "disabled"}>${
-        canMove ? "➡️ 다음 마을로 이동" : last && beaten ? "마지막 마을입니다" : "🔒 관장을 이기면 이동할 수 있어요"
+        canMove ? "➡️ 다음 마을로 이동" : "마지막 마을입니다"
       }</button>
-      <button class="btn secondary" id="pick">🧭 클리어한 마을 선택</button>
+      <button class="btn secondary" id="pick">🧭 마을 선택</button>
       <button class="btn secondary" id="partner">🤝 파트너 고르기</button>
       <button class="btn secondary" id="dex">📖 도감</button>
       <button class="btn ghost" id="home">처음으로</button>
@@ -737,20 +797,17 @@ function renderMap(msg) {
   document.getElementById("home").onclick = renderHome;
 }
 
-// 클리어한 마을(배지를 받은 마을) 중에서 돌아갈 곳을 고릅니다.
+// 모든 마을 중에서 원하는 곳을 고릅니다 (관장 배지와 무관하게 이동 가능).
 function renderVillagePick() {
   Scene3D.dispose();
-  const cleared = [...state.badges].sort((a, b) => a - b);
-  const list = cleared.length
-    ? cleared.map((i) => `
+  const list = VILLAGES.map((v, i) => `
         <button class="btn ${i === state.village ? "" : "secondary"}" data-village="${i}">
-          ${i + 1}. ${VILLAGES[i].name} · ${bandOf(i).name}${i === state.village ? " (현재)" : ""}
-        </button>`).join("")
-    : `<p class="center">아직 클리어한 마을이 없어요. 관장을 이기면 여기서 골라 갈 수 있어요.</p>`;
+          ${i + 1}. ${v.name} · ${bandOf(i).name}${i === state.village ? " (현재)" : ""}${state.badges.includes(i) ? " ✅" : ""}
+        </button>`).join("");
   $app().innerHTML = `
     <h1>🧭 마을 선택</h1>
     <div class="card">
-      <p class="center">클리어한 마을로 돌아갈 수 있어요.</p>
+      <p class="center">원하는 마을로 이동할 수 있어요.</p>
       ${list}
     </div>
     <button class="btn ghost" id="back">지도로</button>`;
@@ -980,9 +1037,9 @@ function answer(enc, n, btn) {
     state.stars += 1;
     enc.gauge -= 1;
     saveState();
-    const lvMsg = gainExp(1);
+    const lvEvents = gainExp(1, enc.wild.lv);
     const hintGot = gainHintExp(1);
-    if (lvMsg) toast(lvMsg);
+    if (lvEvents.length) showFloatCards(lvEvents);
     else if (hintGot) toast(`💡 힌트 포인트 +${hintGot}`);
     btn.style.background = "var(--ok)";
     document.getElementById("hud-gauge").textContent = `마음 ${"♥".repeat(Math.max(0, enc.gauge))}`;
@@ -1057,13 +1114,13 @@ function catchSuccess(wild) {
   if (isNew) state.caught[id] = { lv: wild.lv, exp: 0 };
   state.stars += 3 + wild.tier;
   saveState();
-  const lvMsg = gainExp(wild.lv * 5);
+  const lvEvents = gainExp(wild.lv * 5, wild.lv);
   $app().innerHTML = `
     <div class="card center">
       <h2>🎉 ${wild.poke.name} 잡았다!</h2>
       <div class="encounter stage"><img class="poke" src="assets/pokemon/${id}.png" alt="${wild.poke.name}"></div>
       <p>${isNew ? `도감에 새로 등록됐어요! (Lv.${wild.lv})` : "이미 도감에 있는 친구예요."}</p>
-      <p>${lvMsg ? `🆙 ${lvMsg}` : "파트너가 경험치를 얻었어요."}</p>
+      ${lvEvents.length ? `<div class="event-list">${eventCardsHtml(lvEvents)}</div>` : "<p>파트너가 경험치를 얻었어요.</p>"}
       <p>⭐ ${state.stars}</p>
       <button class="btn" id="again">계속 걷기</button>
       <button class="btn secondary" id="map">지도로</button>
@@ -1265,14 +1322,15 @@ function battleEnd(win, reason = "문제를 더 맞혀서 다시 도전해 보�
   if (win) {
     if (!state.badges.includes(battle.idx)) state.badges.push(battle.idx);
     state.stars += 10;
-    const lvMsg = gainExp(40 + battle.idx * 20);
+    const avgLv = battle.party.reduce((s, m) => s + m.lv, 0) / battle.party.length;
+    const lvEvents = gainExp(40 + battle.idx * 20, avgLv);
     const hintWin = gainHintExp(HINT_WIN_BONUS * HINT_EXP_PER_POINT); // 관장 승리: 힌트 포인트 3개
     saveState();
     $app().innerHTML = `
       <div class="card center">
         <h2>🏆 승리!</h2>
         <p>${v.leader}를 이기고 배지를 얻었어요.</p>
-        <p>${lvMsg ? `🆙 ${lvMsg}` : "파트너가 큰 경험치를 얻었어요."}</p>
+        ${lvEvents.length ? `<div class="event-list">${eventCardsHtml(lvEvents)}</div>` : "<p>파트너가 큰 경험치를 얻었어요.</p>"}
         <p>💡 힌트 포인트 +${hintWin} (보유 ${state.hintPoints}개)</p>
         <button class="btn" id="map">지도로</button>
       </div>`;
@@ -1294,6 +1352,7 @@ function battleEnd(win, reason = "문제를 더 맞혀서 다시 도전해 보�
 }
 
 // ---------- 화면: 파트너 선택 ----------
+let pickEvents = []; // 파트너를 고르면서 일어난 진화 (다음 렌더링에 카드로 표시)
 function renderPartner() {
   Scene3D.dispose();
   const entries = Object.entries(state.caught);
@@ -1309,8 +1368,11 @@ function renderPartner() {
         </button>`;
       }).join("")}</div>`
     : `<p class="center">아직 잡은 포켓몬이 없어요. 먼저 잡아 보세요!</p>`;
+  const notice = pickEvents.length ? `<div class="event-list">${eventCardsHtml(pickEvents)}</div>` : "";
+  pickEvents = [];
   $app().innerHTML = `
     <h1>🤝 파트너 고르기</h1>
+    ${notice}
     <div class="card">
       <p class="center">파트너는 경험치를 얻어 레벨이 오르고, 레벨 10이 되면 진화해요. 파트너의 레벨이 높을수록 배틀에서 더 세게 공격해요.</p>
       ${list}
@@ -1319,9 +1381,10 @@ function renderPartner() {
   document.querySelectorAll("[data-pick]").forEach((b) =>
     b.addEventListener("click", () => {
       state.partnerId = Number(b.dataset.pick);
-      const evoMsg = evolveIfReady();
+      const evo = evolveIfReady();
       saveState();
-      toast(evoMsg || `${byId[state.partnerId].name}을(를) 파트너로 골랐어요`);
+      if (evo) pickEvents = [evo];
+      else toast(`${byId[state.partnerId].name}을(를) 파트너로 골랐어요`);
       renderPartner();
     })
   );
